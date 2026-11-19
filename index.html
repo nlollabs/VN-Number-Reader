@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vietnamese Numbers</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    background: #14171c;
+    color: #f2f2f2;
+    font-family: system-ui, "Segoe UI", sans-serif;
+  }
+  #display { text-align: center; padding: 0 16px; }
+  #word { font-size: 2rem; min-height: 2.5rem; color: #ffd166; }
+  #phonetic { font-size: 1.25rem; min-height: 1.6rem; margin-top: 6px; color: #9aa3ad; font-style: italic; }
+  #timer { width: 316px; max-width: 90vw; height: 6px; border-radius: 3px; background: #262b33; overflow: hidden; }
+  #timerFill { width: 0; height: 100%; background: #ffd166; }
+  #pad {
+    display: grid;
+    grid-template-columns: repeat(3, 96px);
+    gap: 14px;
+  }
+  button {
+    height: 96px;
+    font-size: 2.5rem;
+    font-weight: 600;
+    color: inherit;
+    background: #262b33;
+    border: 2px solid #3a414c;
+    border-radius: 16px;
+    cursor: pointer;
+    transition: transform .08s, background .08s;
+  }
+  button:hover { background: #303640; }
+  button.pressed { background: #ffd166; color: #14171c; transform: scale(.94); }
+  button.speaking { border-color: #ffd166; }
+  #zero { grid-column: 2; }
+  #status { font-size: .9rem; color: #9aa3ad; min-height: 1.2rem; text-align: center; padding: 0 16px; }
+</style>
+</head>
+<body>
+  <div id="display">
+    <div id="word"></div>
+    <div id="phonetic"></div>
+  </div>
+  <div id="timer"><div id="timerFill"></div></div>
+  <div id="pad"></div>
+  <div id="status"></div>
+
+<script>
+  const WORDS = ["không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín"];
+  // Rough English-spelling approximations (tones are not shown)
+  const PHONETIC = ["khohng", "moht", "high", "bah", "bohn", "nahm", "sow (as in cow)", "bye", "tahm", "cheen"];
+  const MALE_HINTS = /nam\s?minh|\ban\b|male|\bnam\b/i;   // known Vietnamese male voices
+  const FEMALE_HINTS = /hoai\s?my|hoaimy|female|linh|\bmy\b/i;
+
+  const pad = document.getElementById("pad");
+  const wordEl = document.getElementById("word");
+  const phoneticEl = document.getElementById("phonetic");
+  const statusEl = document.getElementById("status");
+  const buttons = {};
+
+  // Layout: 1-9 then 0 centered on the bottom row
+  [1, 2, 3, 4, 5, 6, 7, 8, 9, 0].forEach(n => {
+    const b = document.createElement("button");
+    b.textContent = n;
+    if (n === 0) b.id = "zero";
+    b.addEventListener("click", () => press(n));
+    pad.appendChild(b);
+    buttons[n] = b;
+  });
+
+  // ---- Voice selection (prefer a Vietnamese male voice) ----
+  let voice = null;
+  function pickVoice() {
+    const vi = speechSynthesis.getVoices().filter(v => /^vi\b/i.test(v.lang.replace("_", "-")));
+    voice = vi.find(v => MALE_HINTS.test(v.name) && !FEMALE_HINTS.test(v.name))
+         || vi.find(v => !FEMALE_HINTS.test(v.name))
+         || vi[0] || null;
+    if (!vi.length) {
+      statusEl.textContent = "No Vietnamese voice found on this device. Try Microsoft Edge, or install the Vietnamese speech pack in Windows settings.";
+    } else {
+      statusEl.textContent = "Voice: " + voice.name;
+    }
+  }
+  pickVoice();
+  speechSynthesis.addEventListener("voiceschanged", pickVoice);
+
+  // ---- Sound queue: one finishes before the next starts ----
+  const queue = [];
+  let playing = false;
+
+  function press(n) {
+    const b = buttons[n];
+    b.classList.add("pressed");
+    setTimeout(() => b.classList.remove("pressed"), 120);
+    queue.push(n);
+    // Wait a moment so quickly typed numbers are spoken together as one phrase
+    // The wait restarts on every press, so speech begins once typing pauses.
+    if (!playing) {
+      clearTimeout(collectTimer);
+      collectTimer = setTimeout(() => { collectTimer = null; playNext(); }, COLLECT_MS);
+      startTimerBar();
+    }
+  }
+
+  // Bar refills on each press and drains over the wait; empty means speech starts.
+  const timerFill = document.getElementById("timerFill");
+  function startTimerBar() {
+    timerFill.style.transition = "none";
+    timerFill.style.background = "#ffd166";
+    timerFill.style.width = "100%";
+    timerFill.offsetWidth; // force reflow so the drain animation restarts
+    timerFill.style.transition = "width " + COLLECT_MS + "ms linear";
+    timerFill.style.width = "0";
+  }
+
+  // Green refill while the voice prepares the audio. The browser doesn't say
+  // how long that will take, so the bar climbs to 90% over the time it took
+  // last time, then jumps to full the moment the audio actually starts.
+  let prepEstimate = 300;
+  function startPrepBar() {
+    timerFill.style.transition = "none";
+    timerFill.style.background = "#4cd964";
+    timerFill.style.width = "0";
+    timerFill.offsetWidth;
+    timerFill.style.transition = "width " + prepEstimate + "ms ease-out";
+    timerFill.style.width = "90%";
+  }
+  function finishPrepBar() {
+    timerFill.style.transition = "width 60ms linear";
+    timerFill.style.width = "100%";
+  }
+  function clearBar() {
+    timerFill.style.transition = "none";
+    timerFill.style.width = "0";
+  }
+
+  const COLLECT_MS = 1000;
+  const SPEECH_RATE = 0.85; // 1 = the voice's normal speed; lower is slower
+  let collectTimer = null;
+
+  function playNext() {
+    if (!queue.length) { playing = false; clearBar(); return; }
+    playing = true;
+    // Take everything waiting and say it as a single utterance: the voice
+    // then runs the words together naturally instead of pausing between them.
+    const batch = queue.splice(0, queue.length);
+    const u = new SpeechSynthesisUtterance(batch.map(n => WORDS[n]).join(" "));
+    u.lang = "vi-VN";
+    if (voice) u.voice = voice;
+    // If we couldn't confirm a male voice, lower the pitch so it sounds like one
+    u.pitch = voice && MALE_HINTS.test(voice.name) ? 1 : 0.6;
+    u.rate = SPEECH_RATE;
+
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      batch.forEach(n => buttons[n].classList.remove("speaking"));
+      playNext();
+    };
+    const prepStart = performance.now();
+    startPrepBar();
+    u.onstart = () => {
+      prepEstimate = Math.min(3000, Math.max(80, performance.now() - prepStart));
+      finishPrepBar();
+      wordEl.textContent = batch.join(" ") + " — " + batch.map(n => WORDS[n]).join(" ");
+      phoneticEl.textContent = batch.map(n => PHONETIC[n]).join(" · ");
+      batch.forEach(n => buttons[n].classList.add("speaking"));
+    };
+    u.onend = finish;
+    u.onerror = finish;
+    speechSynthesis.speak(u);
+  }
+
+  // ---- Keyboard: numpad and top-row digits ----
+  document.addEventListener("keydown", e => {
+    if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+    let n = null;
+    const m = /^(?:Numpad|Digit)(\d)$/.exec(e.code);
+    if (m) n = +m[1];                       // works even with NumLock off
+    else if (/^\d$/.test(e.key)) n = +e.key;
+    if (n !== null) { e.preventDefault(); press(n); }
+  });
+</script>
+</body>
+</html>
