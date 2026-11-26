@@ -11,7 +11,7 @@ Click a number (or type it on your keyboard or numpad) and the page speaks it al
 - Numbers pressed while it is speaking are queued and spoken next, never overlapping
 - Prefers a male Vietnamese voice when the browser has one
 - Works on mobile as well as desktop: tap the numbers on a phone or tablet
-- No install, no dependencies: just open `vietnamese-numbers.html`
+- No install, no dependencies: just open `index.html`
 
 ## Notes
 
